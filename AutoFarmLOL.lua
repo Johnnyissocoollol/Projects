@@ -24,18 +24,28 @@ local waitingForNewMap = false
 local noclipConnections = {}
 local farmLoopRunning = false
 local hasFlingedThisRound = false
+local isFlingInProgress = false
 
--- ========== SKIDFLING FUNCTION ==========
-local flingLoopActive = false  -- prevents stacking fling loops
+-- Automatically cache your Roblox friends list on load
+local friendUserIds = {}
+task.spawn(function()
+    pcall(function()
+        local pages = Players:GetFriendsAsync(localplayer.UserId)
+        while true do
+            for _, friendInfo in ipairs(pages:GetCurrentPage()) do
+                friendUserIds[friendInfo.Id] = true
+            end
+            if pages.IsFinished then break end
+            pages:AdvanceToNextPageAsync()
+        end
+    end)
+end)
 
 local function isFriend(player)
-    -- Returns true if 'player' is on the local player's friends list
-    local success, result = pcall(function()
-        return localplayer:IsFriendsWith(player.UserId)
-    end)
-    return success and result
+    return friendUserIds[player.UserId] == true
 end
 
+-- ========== SKIDFLING FUNCTION ==========
 local function findMurderer()
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= localplayer then
@@ -46,15 +56,6 @@ local function findMurderer()
         end
     end
     return nil
-end
-
--- Returns true when the target's RootPart has significant upward/air velocity
-local function isFlung(targetPlayer)
-    local char = targetPlayer and targetPlayer.Character
-    if not char then return true end -- gone = done
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return true end
-    return hrp.Velocity.Magnitude > 200 or hrp.Position.Y > 600
 end
 
 local function SkidFling(TargetPlayer)
@@ -183,15 +184,45 @@ local function SkidFling(TargetPlayer)
     end
 end
 
--- Starts a fling loop that keeps trying until the murderer is airborne.
--- If we die mid-fling and autoReset is on, we respawn and try again.
--- Skips flinging if the murderer is a friend.
-local function startFlingLoop()
-    if not flingMurderEnabled or flingLoopActive then return end
-    flingLoopActive = true
+local function isLocalPlayerMurderer()
+    if (localplayer.Backpack and localplayer.Backpack:FindFirstChild("Knife")) or
+       (localplayer.Character and localplayer.Character:FindFirstChild("Knife")) then
+        return true
+    end
+    return false
+end
+
+local function isMurdererAirborne(murderer)
+    if not murderer or not murderer.Character then return false end
+    local hrp = murderer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    return hrp.Velocity.Magnitude > 200
+end
+
+local function doFlingMurderer()
+    if not flingMurderEnabled or isFlingInProgress then return end
+    isFlingInProgress = true
+    hasFlingedThisRound = true
 
     task.spawn(function()
-        -- Find murderer (wait up to 5s)
+        getgenv().OldPos = nil
+
+        -- if WE are the murderer, just auto reset and bail
+        if isLocalPlayerMurderer() then
+            isFlingInProgress = false
+            if autoResetEnabled then
+                deadUntilNextRound = true
+                killCharacter()
+            else
+                task.spawn(function()
+                    task.wait(0.2)
+                    teleportToLobby()
+                end)
+            end
+            return
+        end
+
+        -- find murderer (up to 5 seconds)
         local murderer = nil
         local deadline = tick() + 5
         repeat
@@ -199,54 +230,83 @@ local function startFlingLoop()
             murderer = findMurderer()
         until murderer or tick() > deadline
 
-        -- Abort if no murderer found or they're a friend
-        if not murderer then flingLoopActive = false; return end
+        if not murderer or not murderer.Character then
+            isFlingInProgress = false
+            return
+        end
+
+        -- skip if murderer is a friend
         if isFriend(murderer) then
-            flingLoopActive = false
-            -- Friend is murderer: just do normal auto-reset if enabled
+            isFlingInProgress = false
+            hasFlingedThisRound = false
             if autoResetEnabled then
                 deadUntilNextRound = true
                 killCharacter()
+            else
+                task.spawn(function()
+                    task.wait(0.2)
+                    teleportToLobby()
+                end)
             end
             return
         end
 
-        -- Keep flinging until the murderer is launched into the air
-        while flingMurderEnabled and not isFlung(murderer) do
-            -- If we're dead, wait to respawn then try again
+        -- keep flinging until the murderer is launched or murderer disappears
+        local flingAttempts = 0
+        local maxAttempts = 6
+        local launched = false
+        while flingMurderEnabled and flingAttempts < maxAttempts do
+            flingAttempts = flingAttempts + 1
+
+            -- if we died, wait to respawn before retrying
             local char = localplayer.Character
-            local humanoid = char and char:FindFirstChild("Humanoid")
-            if not char or not humanoid or humanoid.Health <= 0 then
+            if not char or not char:FindFirstChild("HumanoidRootPart") then
                 localplayer.CharacterAdded:Wait()
-                task.wait(1.5)
+                task.wait(1)
                 char = localplayer.Character
             end
 
-            -- Make sure murderer still exists
-            if not murderer.Character or not murderer.Character:FindFirstChild("HumanoidRootPart") then
+            -- make sure murderer is still valid
+            if not murderer or not murderer.Character or not murderer.Character:FindFirstChild("HumanoidRootPart") then
                 break
             end
+            if isFriend(murderer) then break end
 
-            getgenv().OldPos = nil
-            char = localplayer.Character
+            -- teleport to a stable position then fling
             if char and char:FindFirstChild("HumanoidRootPart") then
                 char.HumanoidRootPart.CFrame = CFrame.new(13.6, 504.8, -50.2)
-                task.wait(0.15)
+                task.wait(0.2)
             end
 
             pcall(SkidFling, murderer)
-            task.wait(0.2)
+
+            -- if they got launched, kill ourselves immediately to avoid being airborne with them
+            if isMurdererAirborne(murderer) then
+                launched = true
+                killCharacter()
+                break
+            end
+            task.wait(0.3)
         end
 
-        -- Fling done (or murderer gone) -- now handle auto reset if enabled
-        if autoResetEnabled and not deadUntilNextRound then
+        isFlingInProgress = false
+
+        -- all 6 attempts done and murderer never got launched, or we killed ourselves — reset either way
+        if autoResetEnabled then
             deadUntilNextRound = true
             killCharacter()
+        else
+            task.spawn(function()
+                task.wait(0.2)
+                teleportToLobby()
+            end)
         end
-
-        hasFlingedThisRound = true
-        flingLoopActive = false
     end)
+end
+
+local function flingMurdererAtRoundEnd()
+    if not flingMurderEnabled or hasFlingedThisRound then return end
+    doFlingMurderer()
 end
 
 -- ========== ORIGINAL FUNCTIONS ==========
@@ -485,7 +545,7 @@ local function waitForNewMapToLoad()
     task.wait(2)
     waitingForNewMap = false
     hasFlingedThisRound = false
-    flingLoopActive = false
+    isFlingInProgress = false
     return getActiveMap() ~= nil
 end
 
@@ -565,9 +625,42 @@ local function handleRoundEnd(hrp)
     anchorHRP(hrp, false)
 
     if flingMurderEnabled and not hasFlingedThisRound then
-        -- startFlingLoop handles auto-reset internally (fling first, then reset)
-        startFlingLoop()
-    elseif autoResetEnabled then
+        -- if we're the murderer, skip fling and reset normally
+        if isLocalPlayerMurderer() then
+            if autoResetEnabled then
+                deadUntilNextRound = true
+                killCharacter()
+            else
+                deadUntilNextRound = false
+                task.spawn(function()
+                    task.wait(0.2)
+                    teleportToLobby()
+                end)
+            end
+            return
+        end
+        -- if the murderer is a friend, skip fling and reset normally
+        local murdererNow = findMurderer()
+        if murdererNow and isFriend(murdererNow) then
+            if autoResetEnabled then
+                deadUntilNextRound = true
+                killCharacter()
+            else
+                deadUntilNextRound = false
+                task.spawn(function()
+                    task.wait(0.2)
+                    teleportToLobby()
+                end)
+            end
+            return
+        end
+        -- doFlingMurderer handles the reset itself after flinging
+        flingMurdererAtRoundEnd()
+        return
+    end
+
+    -- normal reset path (no fling, or fling already done this round)
+    if autoResetEnabled then
         deadUntilNextRound = true
         killCharacter()
     else
@@ -640,11 +733,8 @@ local function customDeathHandler()
     disableNoclip()
     visitedCoins = {}
     removeInvisibleFloor()
-    -- Only reset fling state if there is no active fling loop running.
-    -- If flingLoopActive, the loop will respawn us and keep trying.
-    if not flingLoopActive then
-        hasFlingedThisRound = false
-    end
+    -- don't reset hasFlingedThisRound here — fling loop handles its own retries
+    -- only reset isFlingInProgress if we're NOT mid-fling-loop (it manages itself)
     getgenv().OldPos = nil
     if localplayer.Character and localplayer.Character:FindFirstChild("HumanoidRootPart") then
         localplayer.Character.HumanoidRootPart.Anchored = false
