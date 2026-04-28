@@ -1,0 +1,1406 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local VirtualUser = game:GetService("VirtualUser")
+local RunService = game:GetService("RunService")
+local localplayer = Players.LocalPlayer
+
+local tweenSpeed = 15
+local safe2UndergroundOffset = -6.8
+local safe2PickupOffsetY = -2.5
+local farmMode = "Safe"
+local autoFarm = false
+local autoResetEnabled = false
+local antiAfkEnabled = false
+local flingMurderEnabled = false
+local antiFlingEnabled = false
+local antiFlingConnection = nil
+local deadUntilNextRound = false
+local visitedCoins = {}
+local activeTween = nil
+local fakeFloor = nil
+local padFollowConnection = nil
+local antiAfkConnection = nil
+local humanoidDiedConn = nil
+local waitingForNewMap = false
+local noclipConnections = {}
+local farmLoopRunning = false
+local hasFlingedThisRound = false
+local walkMoveConnection = nil  -- used by Walk mode to watch MoveTo completion
+
+-- ========== SKIDFLING FUNCTION ==========
+
+local function isFriend(player)
+    -- Check if player is in local player's friends list
+    local success, result = pcall(function()
+        return localplayer:IsFriendsWith(player.UserId)
+    end)
+    return success and result
+end
+
+local function isLocalPlayerMurderer()
+    local char = localplayer.Character
+    if not char then return false end
+    if char:FindFirstChild("Knife") then return true end
+    local backpack = localplayer.Backpack
+    if backpack and backpack:FindFirstChild("Knife") then return true end
+    return false
+end
+
+local function findMurderer()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localplayer then
+            if (player.Backpack and player.Backpack:FindFirstChild("Knife")) or 
+               (player.Character and player.Character:FindFirstChild("Knife")) then
+                return player
+            end
+        end
+    end
+    return nil
+end
+
+local function SkidFling(TargetPlayer)
+    local Player = localplayer
+    local Character = Player.Character
+    if not Character then return end
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    if not RootPart then return end
+    
+    local TCharacter = TargetPlayer.Character
+    if not TCharacter then return end
+
+    local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+    local TRootPart = THumanoid and THumanoid.RootPart
+    local THead = TCharacter:FindFirstChild("Head")
+    local Accessory = TCharacter:FindFirstChildOfClass("Accessory")
+    local Handle = Accessory and Accessory:FindFirstChild("Handle")
+    
+    if Character and Humanoid and RootPart then
+        if RootPart.Velocity.Magnitude < 50 then
+            getgenv().OldPos = RootPart.CFrame
+        end
+        
+        if THumanoid and THumanoid.Sit then
+            return
+        end
+        
+        if THead then
+            workspace.CurrentCamera.CameraSubject = THead
+        elseif Handle then
+            workspace.CurrentCamera.CameraSubject = Handle
+        elseif THumanoid and TRootPart then
+            workspace.CurrentCamera.CameraSubject = THumanoid
+        end
+        
+        if not TCharacter:FindFirstChildWhichIsA("BasePart") then
+            return
+        end
+        
+        local FPos = function(BasePart, Pos, Ang)
+            RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+            Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+            RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+            RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+        end
+        
+        local SFBasePart = function(BasePart)
+            local TimeToWait = 2
+            local Time = tick()
+            local Angle = 0
+            repeat
+                if RootPart and THumanoid then
+                    if BasePart.Velocity.Magnitude < 50 then
+                        Angle = Angle + 100
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                    else
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                    end
+                end
+            until Time + TimeToWait < tick()
+        end
+        
+        workspace.FallenPartsDestroyHeight = 0/0
+        
+        local BV = Instance.new("BodyVelocity")
+        BV.Parent = RootPart
+        BV.Velocity = Vector3.new(0, 0, 0)
+        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        
+        if TRootPart then
+            SFBasePart(TRootPart)
+        elseif THead then
+            SFBasePart(THead)
+        elseif Handle then
+            SFBasePart(Handle)
+        else
+            BV:Destroy()
+            Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+            return
+        end
+        
+        BV:Destroy()
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+        workspace.CurrentCamera.CameraSubject = Humanoid
+        
+        if getgenv().OldPos then
+            repeat
+                RootPart.CFrame = getgenv().OldPos * CFrame.new(0, .5, 0)
+                Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, .5, 0))
+                Humanoid:ChangeState("GettingUp")
+                for _, part in pairs(Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.Velocity, part.RotVelocity = Vector3.new(), Vector3.new()
+                    end
+                end
+                task.wait()
+            until (RootPart.Position - getgenv().OldPos.p).Magnitude < 25
+        end
+    end
+end
+
+local MAX_FLING_ATTEMPTS = 6
+local flingAttempts = 0
+local flingInProgress = false
+local airborneWatchConn = nil
+local flingLaunchSuccess = false   -- set to true the moment the murderer goes airborne
+
+local function stopAirborneWatch()
+    if airborneWatchConn then
+        airborneWatchConn:Disconnect()
+        airborneWatchConn = nil
+    end
+end
+
+-- Watches the murder's Y velocity; the moment they're launched high, kills them
+local function startAirborneKillWatch(murderer)
+    stopAirborneWatch()
+    airborneWatchConn = RunService.Heartbeat:Connect(function()
+        if not murderer or not murderer.Character then
+            stopAirborneWatch()
+            return
+        end
+        local hrp = murderer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp.Velocity.Y > 200 then
+            -- they're in the air — kill them immediately and flag the launch as done
+            stopAirborneWatch()
+            flingLaunchSuccess = true
+            local hum = murderer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0 end
+        end
+    end)
+end
+
+local function tryFlingMurderer()
+    if not flingMurderEnabled or hasFlingedThisRound then return end
+    if flingInProgress then return end
+    flingInProgress = true
+    -- NOTE: hasFlingedThisRound is NOT set here — it is only set after a
+    -- successful fling so that the retry loop can run all 6 attempts freely.
+
+    task.spawn(function()
+        flingAttempts = 0
+        local flingSuccess = false
+        flingLaunchSuccess = false
+
+        while flingMurderEnabled and flingAttempts < MAX_FLING_ATTEMPTS do
+            flingAttempts = flingAttempts + 1
+
+            -- find murderer (wait up to 5 s per attempt)
+            local murderer = nil
+            local deadline = tick() + 5
+            repeat
+                task.wait(0.3)
+                murderer = findMurderer()
+            until murderer or tick() > deadline
+
+            if not murderer then
+                -- no murderer found at all this attempt — keep retrying
+                task.wait(0.5)
+                continue
+            end
+
+            -- if murderer is a friend → skip fling entirely, auto reset instead
+            if isFriend(murderer) then
+                hasFlingedThisRound = true   -- stop further attempts
+                if autoResetEnabled then
+                    deadUntilNextRound = true
+                    killCharacter()
+                end
+                break
+            end
+
+            -- murderer's character not loaded yet → wait and retry (don't burn the attempt)
+            if not murderer.Character or not murderer.Character:FindFirstChild("HumanoidRootPart") then
+                flingAttempts = flingAttempts - 1   -- refund this attempt
+                task.wait(0.5)
+                continue
+            end
+
+            -- teleport to lobby for stable fling
+            getgenv().OldPos = nil
+            local char = localplayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.CFrame = CFrame.new(13.6, 504.8, -50.2)
+                task.wait(0.15)
+            end
+
+            -- start watching for airborne so we can kill murderer the instant they fly
+            startAirborneKillWatch(murderer)
+
+            -- track if WE die mid-fling so we retry
+            local weDied = false
+            local myChar = localplayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            local deathConn
+            if myHum then
+                deathConn = myHum.Died:Connect(function()
+                    weDied = true
+                end)
+            end
+
+            pcall(SkidFling, murderer)
+            stopAirborneWatch()
+
+            if deathConn then deathConn:Disconnect() end
+
+            -- if the murderer was launched into the air, that's a confirmed success — stop here
+            if flingLaunchSuccess then
+                flingSuccess = true
+                hasFlingedThisRound = true
+                break
+            end
+
+            if weDied then
+                -- we died mid-fling — wait to respawn then retry
+                localplayer.CharacterAdded:Wait()
+                task.wait(1.5)
+                -- customDeathHandler set deadUntilNextRound = true, clear it
+                -- so the fling retry can actually run (we're not done yet)
+                deadUntilNextRound = false
+                -- loop will retry
+            else
+                -- fling completed without us dying → success
+                flingSuccess = true
+                hasFlingedThisRound = true
+                break
+            end
+        end
+
+        -- exhausted all attempts without success → give up, reset and wait for next round
+        if not flingSuccess and flingAttempts >= MAX_FLING_ATTEMPTS then
+            hasFlingedThisRound = true
+            deadUntilNextRound = true
+            if autoResetEnabled then
+                killCharacter()
+            end
+        end
+
+        flingInProgress = false
+        stopAirborneWatch()
+    end)
+end
+
+-- ========== ORIGINAL FUNCTIONS ==========
+
+-- Noclip is only active while tweening to a coin in Safe mode.
+-- enableNoclip() turns it on; disableNoclip() restores collisions immediately.
+local function enableNoclip()
+    for _, conn in pairs(noclipConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    noclipConnections = {}
+
+    local char = localplayer.Character
+    if not char then return end
+
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = false end
+    end
+
+    local partAddedConn = char.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("BasePart") then descendant.CanCollide = false end
+    end)
+    table.insert(noclipConnections, partAddedConn)
+
+    -- PreSimulation keeps noclip enforced before physics each frame
+    local preSimConn = RunService.PreSimulation:Connect(function()
+        if char and char.Parent then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+    table.insert(noclipConnections, preSimConn)
+end
+
+local function disableNoclip()
+    for _, conn in pairs(noclipConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    noclipConnections = {}
+    -- restore collisions so the character behaves normally
+    local char = localplayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = true end
+    end
+end
+
+local function forceServerSync(char)
+    if char and char.PrimaryPart then
+        char:PivotTo(CFrame.new(char.PrimaryPart.Position))
+        char.PrimaryPart.AssemblyLinearVelocity = Vector3.zero
+    end
+end
+
+local function cancelActiveTween()
+    if activeTween then pcall(function() activeTween:Cancel() end) activeTween = nil end
+end
+
+local function anchorHRP(hrp, state)
+    if hrp then hrp.Anchored = state end
+end
+
+-- Creates a small invisible floating pad that follows the player on PreSimulation.
+-- PreSimulation fires before physics resolves, so the pad is always in place
+-- before the engine checks for collisions -- feels like a solid floor underfoot.
+-- HRP sits ~3 studs above the character's feet; pad is 1 stud tall,
+-- so top surface = HRP.Y - 3  =>  pad centre = HRP.Y - 3.5
+local PAD_Y_OFFSET = -3.5
+
+local function createFloatingPad()
+    if fakeFloor and fakeFloor.Parent then fakeFloor:Destroy() end
+    if padFollowConnection then padFollowConnection:Disconnect(); padFollowConnection = nil end
+
+    local pad = Instance.new("Part")
+    pad.Anchored = true
+    pad.CanCollide = true
+    pad.Size = Vector3.new(10, 1, 10)
+    pad.Transparency = 1
+    pad.CanQuery = false
+    pad.CastShadow = false
+    pad.Name = "FloatingPad"
+    pad.Parent = Workspace
+    fakeFloor = pad
+
+    -- PreSimulation fires before physics, keeping the pad locked to the player
+    padFollowConnection = RunService.PreSimulation:Connect(function()
+        local char = localplayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp and pad and pad.Parent then
+            pad.CFrame = CFrame.new(hrp.Position.X, hrp.Position.Y + PAD_Y_OFFSET, hrp.Position.Z)
+        end
+    end)
+end
+
+local function removeInvisibleFloor()
+    if padFollowConnection then padFollowConnection:Disconnect(); padFollowConnection = nil end
+    if fakeFloor and fakeFloor.Parent then fakeFloor:Destroy() end
+    fakeFloor = nil
+end
+
+local function isCoinValid(coin)
+    if not coin or not coin.Parent then return false end
+    if not coin:IsDescendantOf(Workspace) then return false end
+    if not coin:IsA("BasePart") then return false end
+    return coin:FindFirstChild("CoinVisual") ~= nil
+end
+
+local function findActiveCoinContainer()
+    for _, child in ipairs(Workspace:GetChildren()) do
+        local coinContainer = child:FindFirstChild("CoinContainer")
+        if coinContainer then return coinContainer, child end
+    end
+    return nil, nil
+end
+
+local function findNearestCoin(hrp)
+    local nearest, bestDist = nil, math.huge
+    local coinContainer = findActiveCoinContainer()
+    if coinContainer then
+        for _, coin in ipairs(coinContainer:GetChildren()) do
+            if coin:IsA("BasePart") and coin.Name == "Coin_Server" and coin:FindFirstChild("CoinVisual") and not visitedCoins[coin] then
+                local dist = (hrp.Position - coin.Position).Magnitude
+                if dist < bestDist then bestDist = dist; nearest = coin end
+            end
+        end
+    end
+    return nearest
+end
+
+local function isRoundActive()
+    local coinContainer = findActiveCoinContainer()
+    if not coinContainer then return false end
+    for _, coin in ipairs(coinContainer:GetChildren()) do
+        if coin:IsA("BasePart") and coin.Name == "Coin_Server" and coin:FindFirstChild("CoinVisual") then
+            return true
+        end
+    end
+    return false
+end
+
+local function allCoinsGone()
+    local coinContainer = findActiveCoinContainer()
+    if not coinContainer then return true end
+    for _, coin in ipairs(coinContainer:GetChildren()) do
+        if coin:IsA("BasePart") and coin.Name == "Coin_Server" and coin:FindFirstChild("CoinVisual") then
+            return false
+        end
+    end
+    return true
+end
+
+local function getActiveMap()
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("Model") and obj:FindFirstChild("Spawns") and not obj.Name:lower():find("lobby") then
+            return obj
+        end
+    end
+    return nil
+end
+
+local function teleportToMap()
+    local char = localplayer.Character or localplayer.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    local mapModel = getActiveMap()
+    if not mapModel then return false end
+    local spawnsFolder = mapModel:FindFirstChild("Spawns")
+    if spawnsFolder then
+        local spawnPoints = spawnsFolder:GetChildren()
+        if #spawnPoints > 0 then
+            hrp.CFrame = CFrame.new(spawnPoints[math.random(1, #spawnPoints)].Position + Vector3.new(0, 3, 0))
+            forceServerSync(char)
+            return true
+        end
+    end
+    if mapModel.PrimaryPart then
+        hrp.CFrame = mapModel.PrimaryPart.CFrame + Vector3.new(0, 5, 0)
+        forceServerSync(char)
+        return true
+    end
+    return false
+end
+
+local function killCharacter()
+    local char = localplayer.Character
+    if char then
+        local humanoid = char:FindFirstChild("Humanoid")
+        if humanoid then humanoid.Health = 0 end
+    end
+end
+
+local function teleportToLobby()
+    local char = localplayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    char.HumanoidRootPart.CFrame = CFrame.new(13.6, 504.8, -50.2)
+end
+
+local function lobbyTPFarmMain(hrp)
+    if not hrp or waitingForNewMap then return end
+    while autoFarm and not deadUntilNextRound and not waitingForNewMap do
+        if not isRoundActive() or allCoinsGone() then
+            handleRoundEnd(hrp)
+            break
+        end
+        local coin = findNearestCoin(hrp)
+        if coin and isCoinValid(coin) then
+            visitedCoins[coin] = true
+            -- teleport onto the coin to collect it
+            hrp.CFrame = CFrame.new(coin.Position.X, coin.Position.Y + 2, coin.Position.Z)
+            forceServerSync(localplayer.Character)
+            -- wait for server to register the pickup
+            task.wait(0.35)
+            -- return to lobby then wait out cooldown
+            teleportToLobby()
+            -- wait out the cooldown in the lobby
+            task.wait(3.1)
+        else
+            task.wait(0.2)
+        end
+    end
+end
+
+local function waitForNewMapToLoad()
+    waitingForNewMap = true
+    local oldMap = getActiveMap()
+    while getActiveMap() == oldMap and oldMap and oldMap.Parent do
+        task.wait(0.5)
+    end
+    local timeout = tick() + 60
+    while not getActiveMap() and tick() < timeout do
+        task.wait(0.5)
+    end
+    task.wait(2)
+    waitingForNewMap = false
+    hasFlingedThisRound = false
+    flingAttempts = 0
+    flingInProgress = false
+    return getActiveMap() ~= nil
+end
+
+local function doNormalFarm(hrp)
+    if not hrp or not hrp.Parent or deadUntilNextRound or waitingForNewMap then return end
+    local coin = findNearestCoin(hrp)
+    if not coin or not isCoinValid(coin) then
+        task.wait(0.1)
+        return
+    end
+    visitedCoins[coin] = true
+    -- Stay at coin height above ground — no underground offset
+    local coinPos = Vector3.new(coin.Position.X, coin.Position.Y + 2, coin.Position.Z)
+    local tweenTime = math.max((hrp.Position - coinPos).Magnitude / tweenSpeed, 0.1)
+
+    anchorHRP(hrp, false)
+    -- Floating pad keeps us from falling mid-tween; noclip lets us pass through geometry
+    enableNoclip()
+    createFloatingPad()
+    cancelActiveTween()
+    activeTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), { CFrame = CFrame.new(coinPos) })
+    activeTween:Play()
+    activeTween.Completed:Wait()
+    activeTween = nil
+    disableNoclip()
+    removeInvisibleFloor()
+    forceServerSync(localplayer.Character)
+    task.wait(0.05)
+end
+
+local function doSafe2Farm(hrp)
+    if not hrp or not hrp.Parent or deadUntilNextRound or waitingForNewMap then return end
+    local coin = findNearestCoin(hrp)
+    if coin and isCoinValid(coin) then
+        visitedCoins[coin] = true
+        anchorHRP(hrp, false)
+        local deepPos = Vector3.new(coin.Position.X, coin.Position.Y + safe2UndergroundOffset, coin.Position.Z)
+        local tweenTime = math.max((hrp.Position - deepPos).Magnitude / tweenSpeed, 0.1)
+        if tweenTime > 0 then
+            -- Enable noclip + floating pad only for the duration of the tween
+            enableNoclip()
+            createFloatingPad()
+            cancelActiveTween()
+            activeTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), { CFrame = CFrame.new(deepPos) })
+            activeTween:Play()
+            activeTween.Completed:Wait()
+            activeTween = nil
+            -- Tween done — restore collisions and remove pad
+            disableNoclip()
+            removeInvisibleFloor()
+            forceServerSync(localplayer.Character)
+        end
+        -- validate coin is STILL there after tween (not collected mid-flight)
+        if not isCoinValid(coin) then
+            anchorHRP(hrp, true)
+            return
+        end
+        local pickupPos = Vector3.new(coin.Position.X, coin.Position.Y + safe2PickupOffsetY, coin.Position.Z)
+        hrp.CFrame = CFrame.new(pickupPos)
+        task.wait(0.001)
+        -- check again before returning underground
+        if not isCoinValid(coin) then
+            hrp.CFrame = CFrame.new(deepPos)
+            anchorHRP(hrp, true)
+            return
+        end
+        hrp.CFrame = CFrame.new(deepPos)
+        anchorHRP(hrp, true)
+    end
+end
+
+local function handleRoundEnd(hrp)
+    cancelActiveTween()
+    disableNoclip()
+    visitedCoins = {}
+    removeInvisibleFloor()
+    anchorHRP(hrp, false)
+
+    -- if WE are the murderer and auto reset is on → just reset
+    if isLocalPlayerMurderer() then
+        if autoResetEnabled then
+            deadUntilNextRound = true
+            killCharacter()
+        end
+        return
+    end
+
+    if flingMurderEnabled and not hasFlingedThisRound then
+        -- check if murder is a friend before even starting
+        local murderer = findMurderer()
+        if murderer and isFriend(murderer) then
+            -- skip fling, just reset
+            if autoResetEnabled then
+                deadUntilNextRound = true
+                killCharacter()
+            else
+                deadUntilNextRound = false
+                task.spawn(function()
+                    task.wait(0.2)
+                    teleportToLobby()
+                end)
+            end
+            return
+        end
+        tryFlingMurderer()
+    else
+        if autoResetEnabled then
+            deadUntilNextRound = true
+            killCharacter()
+        else
+            deadUntilNextRound = false
+            task.spawn(function()
+                task.wait(0.2)
+                teleportToLobby()
+            end)
+        end
+    end
+end
+
+local function normalFarmMain(hrp)
+    if not hrp or waitingForNewMap then return end
+    while autoFarm and not deadUntilNextRound and not waitingForNewMap do
+        if not isRoundActive() or allCoinsGone() then
+            handleRoundEnd(hrp)
+            break
+        end
+        doNormalFarm(hrp)
+        task.wait()
+    end
+    anchorHRP(hrp, false)
+end
+
+local function safe2FarmMain(hrp)
+    if not hrp or waitingForNewMap then return end
+    anchorHRP(hrp, false)
+    -- No floor pre-created here — the floating pad activates only during each tween
+    forceServerSync(localplayer.Character)
+    anchorHRP(hrp, true)
+    while autoFarm and not deadUntilNextRound and not waitingForNewMap do
+        if isRoundActive() then
+            doSafe2Farm(hrp)
+        end
+        if not isRoundActive() or allCoinsGone() then
+            handleRoundEnd(hrp)
+            break
+        end
+        task.wait(0.05)
+    end
+    removeInvisibleFloor()
+    anchorHRP(hrp, false)
+end
+
+-- Walk mode: same as Safe mode — underground offset, floating pad, noclip during movement —
+-- but uses Humanoid:MoveTo() instead of tweening. Tween speed slider has no effect.
+local function doWalkFarm(hrp)
+    if not hrp or not hrp.Parent or deadUntilNextRound or waitingForNewMap then return end
+    local coin = findNearestCoin(hrp)
+    if not coin or not isCoinValid(coin) then return end
+
+    visitedCoins[coin] = true
+    anchorHRP(hrp, false)
+    local deepPos = Vector3.new(coin.Position.X, coin.Position.Y + safe2UndergroundOffset, coin.Position.Z)
+
+    local char = localplayer.Character
+    local humanoid = char and char:FindFirstChild("Humanoid")
+    if not humanoid then return end
+
+    -- Enable noclip + floating pad only for the duration of the walk
+    enableNoclip()
+    createFloatingPad()
+
+    -- Walk to the underground position, retrying if Roblox's internal 8s MoveTo
+    -- timeout fires before we actually arrive (reached == false).
+    -- After 2 failed retries on the same coin, skip it and move on.
+    local arrived = false
+    local retries = 0
+    while not arrived and retries < 2 and not deadUntilNextRound and not waitingForNewMap do
+        humanoid:MoveTo(deepPos)
+        local moveConn
+        local gotSignal = false
+        local reachedDest = false
+        moveConn = humanoid.MoveToFinished:Connect(function(reached)
+            reachedDest = reached
+            gotSignal = true
+        end)
+        repeat task.wait(0.05) until gotSignal or deadUntilNextRound or waitingForNewMap
+        if moveConn then moveConn:Disconnect() end
+        if reachedDest then
+            arrived = true
+        else
+            retries = retries + 1
+        end
+    end
+
+    -- Stop any leftover movement
+    humanoid:MoveTo(hrp.Position)
+
+    -- Restore collisions and remove pad now that walk is done
+    disableNoclip()
+    removeInvisibleFloor()
+    forceServerSync(char)
+
+    if deadUntilNextRound or waitingForNewMap then return end
+
+    -- Validate coin still exists after the walk
+    if not isCoinValid(coin) then
+        anchorHRP(hrp, true)
+        return
+    end
+    -- Flash up to pickup height to collect it
+    local pickupPos = Vector3.new(coin.Position.X, coin.Position.Y + safe2PickupOffsetY, coin.Position.Z)
+    hrp.CFrame = CFrame.new(pickupPos)
+    task.wait(0.001)
+    -- Check again before going back underground
+    if not isCoinValid(coin) then
+        hrp.CFrame = CFrame.new(deepPos)
+        anchorHRP(hrp, true)
+        return
+    end
+    hrp.CFrame = CFrame.new(deepPos)
+    anchorHRP(hrp, true)
+end
+
+local function walkFarmMain(hrp)
+    if not hrp or waitingForNewMap then return end
+    anchorHRP(hrp, false)
+    forceServerSync(localplayer.Character)
+    anchorHRP(hrp, true)
+    while autoFarm and not deadUntilNextRound and not waitingForNewMap do
+        if isRoundActive() then
+            doWalkFarm(hrp)
+        end
+        if not isRoundActive() or allCoinsGone() then
+            handleRoundEnd(hrp)  -- handles auto reset, lobby TP, fling — same as Safe
+            break
+        end
+        task.wait(0.05)
+    end
+    removeInvisibleFloor()
+    anchorHRP(hrp, false)
+end
+
+local function enableAntiFling()
+    if antiFlingConnection then return end
+    antiFlingConnection = RunService.Stepped:Connect(function()
+        if not antiFlingEnabled then return end
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= localplayer and player.Character then
+                for _, v in pairs(player.Character:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CanCollide = false
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function disableAntiFling()
+    if antiFlingConnection then
+        antiFlingConnection:Disconnect()
+        antiFlingConnection = nil
+    end
+end
+
+local function enableAntiAfk()
+    if antiAfkConnection then return end
+    antiAfkConnection = localplayer.Idled:Connect(function()
+        if not antiAfkEnabled then return end
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end)
+    task.spawn(function()
+        while antiAfkConnection do
+            task.wait(60)
+            if antiAfkEnabled then
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            end
+        end
+    end)
+end
+
+local function customDeathHandler()
+    deadUntilNextRound = true
+    cancelActiveTween()
+    disableNoclip()
+    visitedCoins = {}
+    removeInvisibleFloor()
+    -- only reset fling tracking if we're NOT in the middle of a fling retry cycle
+    if not flingInProgress then
+        hasFlingedThisRound = false
+        flingAttempts = 0
+    end
+    getgenv().OldPos = nil
+    if localplayer.Character and localplayer.Character:FindFirstChild("HumanoidRootPart") then
+        localplayer.Character.HumanoidRootPart.Anchored = false
+    end
+end
+
+local function startFarmLoop()
+    if farmLoopRunning then return end
+    farmLoopRunning = true
+    task.spawn(function()
+        while autoFarm do
+            if deadUntilNextRound then
+                localplayer.CharacterAdded:Wait()
+                task.wait(2)
+                waitForNewMapToLoad()
+                deadUntilNextRound = false
+                visitedCoins = {}
+                task.wait(1)
+                if autoResetEnabled then
+                    teleportToMap()
+                end
+                task.wait(0.3)
+            end
+            local char = localplayer.Character
+            if char and not deadUntilNextRound and not waitingForNewMap then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                local humanoid = char:FindFirstChild("Humanoid")
+                if humanoid and not humanoidDiedConn then
+                    humanoidDiedConn = humanoid.Died:Connect(customDeathHandler)
+                end
+                if hrp and humanoid and humanoid.Health > 0 and isRoundActive() then
+                    if farmMode == "Safe" then
+                        safe2FarmMain(hrp)
+                    elseif farmMode == "Walk" then
+                        walkFarmMain(hrp)
+                    else
+                        normalFarmMain(hrp)
+                    end
+                else
+                    task.wait(1)
+                end
+            else
+                task.wait(1)
+            end
+        end
+        farmLoopRunning = false
+    end)
+end
+
+local function onCharacterAdded()
+    task.wait(0.5)
+    local char = localplayer.Character
+    if char then
+        local humanoid = char:FindFirstChild("Humanoid")
+        if humanoid then
+            if humanoidDiedConn then humanoidDiedConn:Disconnect() end
+            humanoidDiedConn = humanoid.Died:Connect(customDeathHandler)
+        end
+    end
+    if autoResetEnabled and deadUntilNextRound then
+        task.spawn(function()
+            waitForNewMapToLoad()
+            deadUntilNextRound = false
+            visitedCoins = {}
+            task.wait(1)
+            teleportToMap()
+        end)
+    end
+end
+
+localplayer.CharacterAdded:Connect(onCharacterAdded)
+
+Workspace.ChildAdded:Connect(function(child)
+    if not autoFarm or deadUntilNextRound then return end
+    if child:IsA("Model") and not child.Name:lower():find("lobby") and child:FindFirstChild("Spawns") then
+        task.spawn(function()
+            task.wait(2)
+            if autoFarm and not deadUntilNextRound and not waitingForNewMap then
+                teleportToMap()
+                task.wait(0.3)
+            end
+        end)
+    end
+end)
+-- ========== GUI CREATION ==========
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoFarmGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = localplayer:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Name = "MainFrame"
+frame.Size = UDim2.new(0, 220, 0, 340)
+frame.Position = UDim2.new(0.5, -110, 0.1, 0)
+frame.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = frame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 10)
+titleCorner.Parent = titleBar
+
+local titleFix = Instance.new("Frame")
+titleFix.Size = UDim2.new(1, 0, 0.5, 0)
+titleFix.Position = UDim2.new(0, 0, 0.5, 0)
+titleFix.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+titleFix.BorderSizePixel = 0
+titleFix.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -44, 1, 0)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Auto Farm"
+titleLabel.TextColor3 = Color3.fromRGB(210, 210, 210)
+titleLabel.TextSize = 13
+titleLabel.Font = Enum.Font.GothamMedium
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 0, 20)
+closeBtn.Position = UDim2.new(1, -32, 0.5, -10)
+closeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+closeBtn.TextSize = 11
+closeBtn.Font = Enum.Font.GothamMedium
+closeBtn.Parent = titleBar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 5)
+closeCorner.Parent = closeBtn
+
+local reopenBtn = Instance.new("TextButton")
+reopenBtn.Size = UDim2.new(0, 90, 0, 26)
+reopenBtn.Position = UDim2.new(0.5, -45, 0, 8)
+reopenBtn.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+reopenBtn.BorderSizePixel = 0
+reopenBtn.Text = "Auto Farm"
+reopenBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+reopenBtn.TextSize = 11
+reopenBtn.Font = Enum.Font.GothamMedium
+reopenBtn.Visible = false
+reopenBtn.ZIndex = 5
+reopenBtn.Parent = screenGui
+
+local reopenCorner = Instance.new("UICorner")
+reopenCorner.CornerRadius = UDim.new(0, 7)
+reopenCorner.Parent = reopenBtn
+
+closeBtn.MouseButton1Click:Connect(function()
+    frame.Visible = false
+    reopenBtn.Visible = true
+end)
+
+reopenBtn.MouseButton1Click:Connect(function()
+    frame.Visible = true
+    reopenBtn.Visible = false
+end)
+
+local function createToggleRow(parent, labelText, yPos)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -28, 0, 34)
+    row.Position = UDim2.new(0, 14, 0, yPos)
+    row.BackgroundTransparency = 1
+    row.Parent = parent
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -58, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(185, 185, 185)
+    label.TextSize = 12
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local toggleBg = Instance.new("Frame")
+    toggleBg.Size = UDim2.new(0, 44, 0, 24)
+    toggleBg.Position = UDim2.new(1, -44, 0.5, -12)
+    toggleBg.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    toggleBg.BorderSizePixel = 0
+    toggleBg.Parent = row
+
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(1, 0)
+    toggleCorner.Parent = toggleBg
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = UDim2.new(0, 3, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+    knob.BorderSizePixel = 0
+    knob.Parent = toggleBg
+
+    local knobCorner = Instance.new("UICorner")
+    knobCorner.CornerRadius = UDim.new(1, 0)
+    knobCorner.Parent = knob
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.Parent = toggleBg
+
+    return btn, toggleBg, knob
+end
+
+local function setToggleState(toggleBg, knob, state)
+    if state then
+        TweenService:Create(toggleBg, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(130, 130, 130) }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.15), { Position = UDim2.new(0, 23, 0.5, -9) }):Play()
+    else
+        TweenService:Create(toggleBg, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(80, 80, 80) }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.15), { Position = UDim2.new(0, 3, 0.5, -9) }):Play()
+    end
+end
+
+local farmBtn, farmBg, farmKnob = createToggleRow(frame, "Enable Auto Farm", 44)
+local antiAfkBtn, antiAfkBg, antiAfkKnob = createToggleRow(frame, "Anti AFK", 84)
+local resetBtn, resetBg, resetKnob = createToggleRow(frame, "Auto Reset", 124)
+local flingBtn, flingBg, flingKnob = createToggleRow(frame, "Fling Murder", 164)
+local antiFlingBtn, antiFlingBg, antiFlingKnob = createToggleRow(frame, "Anti-Fling", 204)
+
+setToggleState(farmBg, farmKnob, false)
+setToggleState(antiAfkBg, antiAfkKnob, false)
+setToggleState(resetBg, resetKnob, false)
+setToggleState(flingBg, flingKnob, false)
+setToggleState(antiFlingBg, antiFlingKnob, false)
+
+local modeRow = Instance.new("Frame")
+modeRow.Size = UDim2.new(1, -28, 0, 34)
+modeRow.Position = UDim2.new(0, 14, 0, 244)
+modeRow.BackgroundTransparency = 1
+modeRow.Parent = frame
+
+local modeLabel = Instance.new("TextLabel")
+modeLabel.Size = UDim2.new(0, 60, 1, 0)
+modeLabel.BackgroundTransparency = 1
+modeLabel.Text = "Mode"
+modeLabel.TextColor3 = Color3.fromRGB(185, 185, 185)
+modeLabel.TextSize = 12
+modeLabel.Font = Enum.Font.Gotham
+modeLabel.TextXAlignment = Enum.TextXAlignment.Left
+modeLabel.Parent = modeRow
+
+local modes = { "Safe", "Walk", "Normal" }
+local modeIndex = 1
+
+local modeBtn = Instance.new("TextButton")
+modeBtn.Size = UDim2.new(0, 110, 0, 24)
+modeBtn.Position = UDim2.new(1, -110, 0.5, -12)
+modeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+modeBtn.BorderSizePixel = 0
+modeBtn.Text = modes[modeIndex]
+modeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+modeBtn.TextSize = 11
+modeBtn.Font = Enum.Font.Gotham
+modeBtn.Parent = modeRow
+
+local modeBtnCorner = Instance.new("UICorner")
+modeBtnCorner.CornerRadius = UDim.new(0, 6)
+modeBtnCorner.Parent = modeBtn
+
+local arrowLabel = Instance.new("TextLabel")
+arrowLabel.Size = UDim2.new(0, 16, 1, 0)
+arrowLabel.Position = UDim2.new(1, -18, 0, 0)
+arrowLabel.BackgroundTransparency = 1
+arrowLabel.Text = "v"
+arrowLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
+arrowLabel.TextSize = 9
+arrowLabel.Font = Enum.Font.GothamMedium
+arrowLabel.Parent = modeBtn
+
+local dropPanel = Instance.new("Frame")
+dropPanel.Size = UDim2.new(0, 110, 0, #modes * 28)
+dropPanel.Position = UDim2.new(1, -110, 0, 276)
+dropPanel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+dropPanel.BorderSizePixel = 0
+dropPanel.ZIndex = 10
+dropPanel.Visible = false
+dropPanel.Parent = frame
+
+local dropCorner = Instance.new("UICorner")
+dropCorner.CornerRadius = UDim.new(0, 6)
+dropCorner.Parent = dropPanel
+
+for i, modeName in ipairs(modes) do
+    local opt = Instance.new("TextButton")
+    opt.Size = UDim2.new(1, 0, 0, 28)
+    opt.Position = UDim2.new(0, 0, 0, (i - 1) * 28)
+    opt.BackgroundTransparency = 1
+    opt.Text = modeName
+    opt.TextColor3 = Color3.fromRGB(200, 200, 200)
+    opt.TextSize = 11
+    opt.Font = Enum.Font.Gotham
+    opt.ZIndex = 11
+    opt.Parent = dropPanel
+
+    opt.MouseButton1Click:Connect(function()
+        modeIndex = i
+        farmMode = modeName
+        modeBtn.Text = modeName
+        arrowLabel.Parent = modeBtn
+        dropPanel.Visible = false
+        -- Grey out the tween speed slider when Walk mode is selected (slider has no effect)
+        local isWalk = (modeName == "Walk")
+        speedLabel.TextColor3 = isWalk and Color3.fromRGB(90, 90, 90) or Color3.fromRGB(185, 185, 185)
+        speedVal.TextColor3  = isWalk and Color3.fromRGB(90, 90, 90) or Color3.fromRGB(200, 200, 200)
+        sliderTrack.BackgroundColor3 = isWalk and Color3.fromRGB(45, 45, 45) or Color3.fromRGB(65, 65, 65)
+        sliderFill.BackgroundColor3  = isWalk and Color3.fromRGB(60, 60, 60) or Color3.fromRGB(150, 150, 150)
+        sliderKnob.BackgroundColor3  = isWalk and Color3.fromRGB(70, 70, 70) or Color3.fromRGB(210, 210, 210)
+        sliderBtn.Active = not isWalk
+    end)
+
+    opt.MouseEnter:Connect(function()
+        TweenService:Create(opt, TweenInfo.new(0.1), { BackgroundTransparency = 0.7 }):Play()
+        opt.BackgroundColor3 = Color3.fromRGB(90, 90, 90)
+    end)
+    opt.MouseLeave:Connect(function()
+        TweenService:Create(opt, TweenInfo.new(0.1), { BackgroundTransparency = 1 }):Play()
+    end)
+end
+
+modeBtn.MouseButton1Click:Connect(function()
+    dropPanel.Visible = not dropPanel.Visible
+end)
+
+local speedRow = Instance.new("Frame")
+speedRow.Size = UDim2.new(1, -28, 0, 40)
+speedRow.Position = UDim2.new(0, 14, 0, 285)
+speedRow.BackgroundTransparency = 1
+speedRow.Parent = frame
+
+local speedHeader = Instance.new("Frame")
+speedHeader.Size = UDim2.new(1, 0, 0, 16)
+speedHeader.BackgroundTransparency = 1
+speedHeader.Parent = speedRow
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(0.7, 0, 1, 0)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Tween Speed"
+speedLabel.TextColor3 = Color3.fromRGB(185, 185, 185)
+speedLabel.TextSize = 12
+speedLabel.Font = Enum.Font.Gotham
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.Parent = speedHeader
+
+local speedVal = Instance.new("TextLabel")
+speedVal.Size = UDim2.new(0.3, 0, 1, 0)
+speedVal.Position = UDim2.new(0.7, 0, 0, 0)
+speedVal.BackgroundTransparency = 1
+speedVal.Text = tostring(tweenSpeed)
+speedVal.TextColor3 = Color3.fromRGB(200, 200, 200)
+speedVal.TextSize = 12
+speedVal.Font = Enum.Font.GothamMedium
+speedVal.TextXAlignment = Enum.TextXAlignment.Right
+speedVal.Parent = speedHeader
+
+local sliderTrack = Instance.new("Frame")
+sliderTrack.Size = UDim2.new(1, 0, 0, 4)
+sliderTrack.Position = UDim2.new(0, 0, 0, 26)
+sliderTrack.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+sliderTrack.BorderSizePixel = 0
+sliderTrack.Parent = speedRow
+
+local trackCorner = Instance.new("UICorner")
+trackCorner.CornerRadius = UDim.new(1, 0)
+trackCorner.Parent = sliderTrack
+
+local sliderFill = Instance.new("Frame")
+sliderFill.Size = UDim2.new(tweenSpeed / 30, 0, 1, 0)
+sliderFill.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+sliderFill.BorderSizePixel = 0
+sliderFill.Parent = sliderTrack
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(1, 0)
+fillCorner.Parent = sliderFill
+
+local sliderKnob = Instance.new("Frame")
+sliderKnob.Size = UDim2.new(0, 14, 0, 14)
+sliderKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+sliderKnob.Position = UDim2.new(tweenSpeed / 30, 0, 0.5, 0)
+sliderKnob.BackgroundColor3 = Color3.fromRGB(210, 210, 210)
+sliderKnob.BorderSizePixel = 0
+sliderKnob.Parent = sliderTrack
+
+local knobCorner2 = Instance.new("UICorner")
+knobCorner2.CornerRadius = UDim.new(1, 0)
+knobCorner2.Parent = sliderKnob
+
+local sliderBtn = Instance.new("TextButton")
+sliderBtn.Size = UDim2.new(1, 0, 0, 24)
+sliderBtn.Position = UDim2.new(0, 0, 0.5, -12)
+sliderBtn.BackgroundTransparency = 1
+sliderBtn.Text = ""
+sliderBtn.Parent = sliderTrack
+
+local sliding = false
+
+local function updateSlider(inputX)
+    local trackPos = sliderTrack.AbsolutePosition.X
+    local trackSize = sliderTrack.AbsoluteSize.X
+    local rel = math.clamp((inputX - trackPos) / trackSize, 0, 1)
+    local newSpeed = math.round(rel * 30)
+    if newSpeed < 1 then newSpeed = 1 end
+    tweenSpeed = newSpeed
+    speedVal.Text = tostring(newSpeed)
+    sliderFill.Size = UDim2.new(rel, 0, 1, 0)
+    sliderKnob.Position = UDim2.new(rel, 0, 0.5, 0)
+end
+
+sliderBtn.InputBegan:Connect(function(input)
+    if farmMode == "Walk" then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        sliding = true
+        updateSlider(input.Position.X)
+    end
+end)
+
+sliderBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        sliding = false
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSlider(input.Position.X)
+    end
+end)
+
+local dragging = false
+local dragInput, dragStart, startPos
+
+local function onInputBegan(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end
+
+local function onInputChanged(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end
+
+titleBar.InputBegan:Connect(onInputBegan)
+titleBar.InputChanged:Connect(onInputChanged)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+-- ========== BUTTON HANDLERS ==========
+farmBtn.MouseButton1Click:Connect(function()
+    autoFarm = not autoFarm
+    setToggleState(farmBg, farmKnob, autoFarm)
+    if autoFarm then
+        deadUntilNextRound = false
+        visitedCoins = {}
+        startFarmLoop()
+    else
+        cancelActiveTween()
+        disableNoclip()
+        removeInvisibleFloor()
+        local char = localplayer.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.Anchored = false end
+        end
+    end
+end)
+
+antiAfkBtn.MouseButton1Click:Connect(function()
+    antiAfkEnabled = not antiAfkEnabled
+    setToggleState(antiAfkBg, antiAfkKnob, antiAfkEnabled)
+    if antiAfkEnabled then
+        enableAntiAfk()
+    else
+        if antiAfkConnection then
+            antiAfkConnection:Disconnect()
+            antiAfkConnection = nil
+        end
+    end
+end)
+
+resetBtn.MouseButton1Click:Connect(function()
+    autoResetEnabled = not autoResetEnabled
+    setToggleState(resetBg, resetKnob, autoResetEnabled)
+end)
+
+flingBtn.MouseButton1Click:Connect(function()
+    flingMurderEnabled = not flingMurderEnabled
+    setToggleState(flingBg, flingKnob, flingMurderEnabled)
+    if not flingMurderEnabled then
+        hasFlingedThisRound = false
+    end
+end)
+
+antiFlingBtn.MouseButton1Click:Connect(function()
+    antiFlingEnabled = not antiFlingEnabled
+    setToggleState(antiFlingBg, antiFlingKnob, antiFlingEnabled)
+    if antiFlingEnabled then
+        enableAntiFling()
+    else
+        disableAntiFling()
+    end
+end)
+
+print("Script loaded - Fling Murder: friend check, 6-attempt retry fixed, airborne kill, anti-fling toggle added")
